@@ -173,7 +173,7 @@ def forward_to_gateway(payload: dict, path: str = "/v1/chat/completions") -> tup
     req = urllib.request.Request(
         bk.rstrip("/") + path, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {os.environ.get('BK_KEY_TENANT_A', 'bk-tenant-a-dev')}"})
+                 "Authorization": f"Bearer {os.environ.get('bk_key_tenant_a', 'bk-tenant-a-dev')}"})
     try:
         with urllib.request.urlopen(req, timeout=240) as r:
             return r.status, r.read()
