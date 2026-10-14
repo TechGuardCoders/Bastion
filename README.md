@@ -63,3 +63,15 @@ Port map: 3000 never · 3001 Cost Peep · 3100 Ball Knowledge · **3200 Bastion*
 ## What's next
 
 Per-tenant attribution from this stack fills **Cost Peep's BY TENANT tab** — cost per tenant with the security to trust who's who.
+
+## Fleet mode (per-node scoped credentials)
+
+Bastion keys can be scoped to specific fleet nodes. A key with no node restriction works everywhere (default, unchanged); a scoped key authenticates only on its allowlisted nodes.
+
+```python
+raw, kid = vault.mint("tenant-a", {"chat:read"}, nodes={"glm-head", "tensorfold"})
+vault.authenticate(f"Bearer {raw}", node_id="tensorfold")  # ok
+vault.authenticate(f"Bearer {raw}", node_id="bonsai")      # None -> 403
+```
+
+Routing: `POST /v1/chat/completions` with header `X-Fleet-Node: <id>` forwards to that node (from `BASTION_FLEET_NODES`, comma-separated `id=url` pairs). Keys not scoped to the target node get 403, and the denial is audit-logged.

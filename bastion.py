@@ -50,8 +50,14 @@ class KeyRecord:
     salt: bytes
     hash_hex: str        # PBKDF2(..., salt, iters) hex
     scopes: set[str]
+    nodes: set[str] | None = None   # node allowlist; None = all fleet nodes
     revoked: bool = False
     created: float = field(default_factory=time.time)
+
+    def allowed_on(self, node_id: str) -> bool:
+        """Fleet scoping: a key may be restricted to specific nodes. A key
+        with no node restriction works everywhere (default, unchanged)."""
+        return self.nodes is None or node_id in self.nodes
 
 
 class KeyVault:
@@ -61,24 +67,31 @@ class KeyVault:
     def __init__(self):
         self._records: dict[str, list[KeyRecord]] = defaultdict(list)  # tenant -> versions
 
-    def mint(self, tenant_id: str, scopes: set[str]) -> tuple[str, str]:
-        """Returns (plaintext_key, key_id). Plaintext is shown once, never stored."""
+    def mint(self, tenant_id: str, scopes: set[str],
+             nodes: set[str] | None = None) -> tuple[str, str]:
+        """Returns (plaintext_key, key_id). Plaintext is shown once, never stored.
+        `nodes` optionally scopes the key to a fleet-node allowlist (None = all)."""
         raw = "bkx-" + secrets.token_hex(24)
         key_id = f"v{len(self._records[tenant_id]) + 1}"
         salt = secrets.token_bytes(16)
         digest = hashlib.pbkdf2_hmac("sha256", raw.encode(), salt, PBKDF2_ITERATIONS)
         self._records[tenant_id].append(
             KeyRecord(tenant_id=tenant_id, key_id=key_id, salt=salt,
-                      hash_hex=digest.hex(), scopes=set(scopes) & SCOPES))
+                      hash_hex=digest.hex(), scopes=set(scopes) & SCOPES,
+                      nodes=set(nodes) if nodes else None))
         return raw, key_id
 
-    def authenticate(self, authorization: str | None) -> Optional[KeyRecord]:
+    def authenticate(self, authorization: str | None, node_id: str | None = None) -> Optional[KeyRecord]:
+        """Verify a bearer key. When `node_id` is given, keys scoped to other
+        fleet nodes do not authenticate there (per-node allowlist)."""
         if not authorization or not authorization.lower().startswith("bearer "):
             return None
         presented = authorization.split(" ", 1)[1].strip()
         for versions in self._records.values():
             for rec in versions:
                 if rec.revoked:
+                    continue
+                if node_id is not None and not rec.allowed_on(node_id):
                     continue
                 digest = hashlib.pbkdf2_hmac(
                     "sha256", presented.encode(), rec.salt, PBKDF2_ITERATIONS)
@@ -93,9 +106,34 @@ class KeyVault:
                 return True
         return False
 
-    def rotate(self, tenant_id: str, scopes: set[str]) -> tuple[str, str]:
-        """Mint a new version; old versions keep working until revoked."""
-        return self.mint(tenant_id, scopes)
+    def rotate(self, tenant_id: str, scopes: set[str],
+               nodes: set[str] | None = None) -> tuple[str, str]:
+        """Mint a new version; old versions keep working until revoked.
+        Node scoping carries over only if explicitly passed."""
+        return self.mint(tenant_id, scopes, nodes=nodes)
+
+
+# ---------------------------------------------------------------- fleet
+#
+# Fleet nodes: the compute pool behind Bastion. Each node is a base URL;
+# keys may be scoped per node (KeyRecord.nodes). The default gateway
+# (BK_BASE_URL) is unchanged when no node is specified.
+
+DEFAULT_NODE = "default"
+
+
+def fleet_nodes() -> dict[str, str]:
+    """Node id -> base URL, from BASTION_FLEET_NODES (comma-separated
+    id=url pairs). Empty env -> only the default gateway exists."""
+    out: dict[str, str] = {}
+    raw = os.environ.get("BASTION_FLEET_NODES", "")
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            nid, url = pair.split("=", 1)
+            if nid and url:
+                out[nid.strip()] = url.strip()
+    return out
 
 
 # ------------------------------------------------- tamper-evident audit
@@ -168,8 +206,11 @@ def sandbox_exec(code: str, timeout_s: float = 5.0) -> dict:
 # ---------------------------------------------------------------- proxy
 
 
-def forward_to_gateway(payload: dict, path: str = "/v1/chat/completions") -> tuple[int, bytes]:
-    bk = os.environ.get("BK_BASE_URL", "http://127.0.0.1:3100")
+def forward_to_gateway(payload: dict, path: str = "/v1/chat/completions",
+                       base_url: str | None = None) -> tuple[int, bytes]:
+    """Forward to a fleet node. `base_url` targets a specific node; None
+    keeps the default BK_BASE_URL gateway (unchanged behavior)."""
+    bk = base_url or os.environ.get("BK_BASE_URL", "http://127.0.0.1:3100")
     req = urllib.request.Request(
         bk.rstrip("/") + path, data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json",
@@ -220,9 +261,25 @@ async def chat(request: Request):
         return JSONResponse({"error": "scope chat:read required"}, status_code=HTTPStatus.FORBIDDEN)
 
     body = await request.json()
-    status, resp = forward_to_gateway(body)
+    # Fleet routing: X-Fleet-Node targets a specific node. The key must be
+    # allowed on that node (per-node allowlist); unscoped keys work anywhere.
+    node_id = request.headers.get("X-Fleet-Node") or None
+    if node_id is not None:
+        recheck = vault.authenticate(request.headers.get("Authorization"), node_id=node_id)
+        if recheck is None:
+            tenant_chain(rec).append({"event": "node_denied", "node": node_id})
+            return JSONResponse({"error": f"key not scoped to node {node_id}"},
+                                status_code=HTTPStatus.FORBIDDEN)
+        base_url = fleet_nodes().get(node_id)
+        if base_url is None:
+            return JSONResponse({"error": f"unknown node {node_id}"},
+                                status_code=HTTPStatus.BAD_REQUEST)
+    else:
+        base_url = None
+    status, resp = forward_to_gateway(body, base_url=base_url)
     tenant_chain(rec).append({"event": "chat_served", "status": status,
-                              "bytes": len(resp)})
+                              "bytes": len(resp),
+                              **({"node": node_id} if node_id else {})})
     return Response(content=resp, media_type="application/json", status_code=status)
 
 
