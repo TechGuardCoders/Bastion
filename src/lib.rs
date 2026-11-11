@@ -11,7 +11,6 @@
 //! - Tenant isolation: audit/exec history is namespaced per tenant
 //! - Fleet scoping: per-node key allowlists (X-Fleet-Node)
 
-use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -66,6 +65,18 @@ pub struct KeyVault {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Constant-time byte equality (mirrors Python's hmac.compare_digest).
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 /// PBKDF2-HMAC-SHA256 helper (public for tests): hex digest of input+salt.
@@ -144,9 +155,7 @@ impl KeyVault {
                 }
                 let digest = pbkdf2_hex(presented, &rec.salt);
                 // constant-time comparison
-                let mut mac = Hmac::<Sha256>::new_from_slice(rec.hash_hex.as_bytes()).ok()?;
-                mac.update(digest.as_bytes());
-                if mac.verify_slice(digest.as_bytes()).is_ok() {
+                if constant_time_eq(digest.as_bytes(), rec.hash_hex.as_bytes()) {
                     return Some(rec.clone());
                 }
             }
