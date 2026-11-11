@@ -16,3 +16,9 @@ jobs:
           python -m uvicorn bastion:app --port 3200 &
           sleep 4
           curl -s http://localhost:3200/health | grep -o '"audit_ok":true'
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --all-targets

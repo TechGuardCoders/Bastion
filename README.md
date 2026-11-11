@@ -75,3 +75,29 @@ vault.authenticate(f"Bearer {raw}", node_id="bonsai")      # None -> 403
 ```
 
 Routing: `POST /v1/chat/completions` with header `X-Fleet-Node: <id>` forwards to that node (from `BASTION_FLEET_NODES`, comma-separated `id=url` pairs). Keys not scoped to the target node get 403, and the denial is audit-logged.
+
+## Rust implementation
+
+The same security shell, rewritten in Rust (`src/lib.rs` + `src/main.rs`), with the
+Python module kept as the reference implementation. Both live in this repo.
+
+- `src/lib.rs` — the primitives: `KeyVault` (PBKDF2-HMAC-SHA256, 60k iterations,
+  per-key salt, versioned keys, per-node allowlists), `AuditChain` (hash-chained,
+  tamper-evident), `sandbox_exec` (jailed subprocess: disposable cwd, clean env,
+  hard timeout), `fleet_nodes` (env-parsed node routing), `forward_to_gateway`.
+- `src/main.rs` — the gateway on port 3200 (tiny_http): `/health`,
+  `/v1/chat/completions` (with `X-Fleet-Node` routing + 403 on unscoped nodes),
+  `/v1/tools/exec`, `/v1/audit`, and the admin plane (rotate / revoke / verify /
+  tamper-audit), all mirroring the FastAPI app 1:1.
+- `tests/test_bastion.rs` + `tests/test_fleet.rs` — every Python test case ported
+  1:1 (13 tests).
+
+Build and test:
+
+```bash
+cargo test --all-targets   # unit + fleet tests, offline
+cargo run --release        # serves :3200
+```
+
+CI runs both stacks: pytest for Python, `cargo test --all-targets` (stable
+toolchain) for Rust.
