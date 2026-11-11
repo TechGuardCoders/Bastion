@@ -109,7 +109,7 @@ impl KeyVault {
             .collect();
         versions.push(KeyRecord {
             tenant_id: tenant_id.to_string(),
-            key_id,
+            key_id: key_id.clone(),
             salt: salt.to_vec(),
             hash_hex,
             scopes: kept_scopes,
