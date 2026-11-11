@@ -335,7 +335,8 @@ fn handle(
                 return json_response(400, serde_json::json!({"error": "no events to tamper"}));
             }
             // Attack simulation: silent in-place edit of an existing entry body.
-            let victim = &mut chain.events[chain.events.len() / 2];
+            let mid = chain.events.len() / 2;
+            let victim = &mut chain.events[mid];
             victim.body = format!("{} ", victim.body);
             let (ok, reason) = chain.verify();
             json_response(200, serde_json::json!({"tampered": true, "integrity_ok": ok, "reason": reason}))
