@@ -14,7 +14,7 @@
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
