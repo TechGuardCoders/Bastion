@@ -101,3 +101,15 @@ cargo run --release        # serves :3200
 
 CI runs both stacks: pytest for Python, `cargo test --all-targets` (stable
 toolchain) for Rust.
+
+## Docker
+
+Multi-stage, multi-arch (amd64 + arm64), non-root runtime image. Exposes :3200.
+Defaults to the Python reference server; set `RUN_RUST=1` to run the Rust build.
+
+```bash
+docker build --target test .            # run the test suite in-container
+docker build -t bastion .               # runtime image (Python reference on :3200)
+docker run --rm -p 3200:3200 bastion
+docker run --rm -e RUN_RUST=1 -p 3200:3200 bastion   # Rust implementation
+```
