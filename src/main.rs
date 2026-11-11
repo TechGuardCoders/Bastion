@@ -44,7 +44,7 @@ fn main() {
 
     for mut request in server.incoming_requests() {
         let url = request.url().to_string();
-        let (path, _query) = url.split_once('?').unwrap_or((&url, ""));
+        let path = url.split_once('?').map(|(p, _)| p).unwrap_or(&url).to_string();
         let method = request.method().clone();
         let auth = request
             .headers()
