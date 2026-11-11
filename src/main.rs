@@ -69,7 +69,7 @@ fn main() {
             handle(method, path, auth, admin_token, fleet_node, body, state)
         })
         .join()
-        .unwrap_or_else(|| json_response(500, serde_json::json!({"error": "handler panic"})));
+        .unwrap_or_else(|_| json_response(500, serde_json::json!({"error": "handler panic"})));
 
         let _ = request.respond(response);
     }
