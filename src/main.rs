@@ -15,7 +15,7 @@ struct State {
     exec_history: HashMap<String, Vec<serde_json::Value>>,
 }
 
-fn json_response(code: u16, body: serde_json::Value) -> Response<std::io::Empty> {
+fn json_response(code: u16, body: serde_json::Value) -> Response<std::io::Cursor<Vec<u8>>> {
     let data = body.to_string().into_bytes();
     Response::from_data(data)
         .with_status_code(code)
@@ -83,7 +83,7 @@ fn handle(
     fleet_node: Option<String>,
     body: String,
     state: Arc<Mutex<State>>,
-) -> Response<std::io::Empty> {
+) -> Response<std::io::Cursor<Vec<u8>>> {
     let mut st = state.lock().unwrap();
 
     match (&method, path) {
